@@ -3,7 +3,9 @@ import java.nio.file.*;
 
 import static java.nio.file.StandardWatchEventKinds.*;
 
-import java.text.NumberFormat;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
@@ -18,11 +20,17 @@ public class ROIFileTask {
         Properties prop = new Properties();
         final File folder;
         final File avgFolder;
+        final String USER;
+        final String PASSWORD;
+        final String JDBC_DRIVER = "com.mysql.jdbc.Driver";
+        final String DB_URL = "jdbc:mysql://localhost/";
+        Connection conn = null;
+        Statement stmt = null;
 
         ExecutorService executorService = Executors.newFixedThreadPool(10);
         final Thread stopThread = new Thread(new Runnable() {
             public void run() {
-                while(!stopped){
+                while (!stopped) {
                     BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
                     String input = "";
                     try {
@@ -30,7 +38,7 @@ public class ROIFileTask {
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
-                    if(input.toUpperCase().equals("STOP")){
+                    if (input.toUpperCase().equals("STOP")) {
                         stopped = true;
                         try {
                             watcher.close();
@@ -43,7 +51,6 @@ public class ROIFileTask {
         });
         stopThread.start();
 
-        //WatchService watcher;
         try {
             ClassLoader loader = Thread.currentThread().getContextClassLoader();
             InputStream resourceStream = loader.getResourceAsStream("config.properties");
@@ -51,6 +58,23 @@ public class ROIFileTask {
 
             folder = new File(prop.getProperty("inputFolder"));
             avgFolder = new File(prop.getProperty("outputFolder"));
+            USER = prop.getProperty("dbuser");
+            PASSWORD = prop.getProperty("dbpassword");
+
+            Class.forName("com.mysql.jdbc.Driver");
+            String createTableSQL = "CREATE TABLE DBUSER("
+                    + "USER_ID NUMBER(5) NOT NULL, "
+                    + "USERNAME VARCHAR(20) NOT NULL, "
+                    + "CREATED_BY VARCHAR(20) NOT NULL, "
+                    + "CREATED_DATE DATE NOT NULL, " + "PRIMARY KEY (USER_ID) "
+                    + ")";
+            String createDatabaseSQL = "CREATE DATABASE IF NOT EXISTS dbname";
+
+            conn = DriverManager.getConnection(DB_URL, USER, PASSWORD);
+            stmt = conn.createStatement();
+            stmt.execute(createDatabaseSQL);
+            stmt.execute("USE dbname");
+            stmt.execute("INSERT INTO new_table (userID, link, time, date) VALUES ('user1', 'vk.com', 100, '2000-11-05')");
 
             watcher = FileSystems.getDefault().newWatchService();
             Path dir = folder.toPath();
@@ -88,11 +112,9 @@ public class ROIFileTask {
                     }
                 }
             }
-        }
-        catch (ClosedWatchServiceException e){
+        } catch (ClosedWatchServiceException e) {
             System.out.println("Application was stopped.");
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
             e.printStackTrace();
         } finally {
             executorService.shutdown();
@@ -186,7 +208,6 @@ public class ROIFileTask {
             return false;
         }
     }
-    //test
 
     private static void addToList(List<ViewItem> list, ViewItem item) {
         Calendar calendar1 = new GregorianCalendar(TimeZone.getTimeZone("GMT"));
@@ -244,12 +265,11 @@ public class ROIFileTask {
                         return -1;
                     else
                         return 1;
-                }
-                catch (NumberFormatException e){
-                    if(o1.getUserID().compareTo(o2.getUserID())<0)
+                } catch (NumberFormatException e) {
+                    if (o1.getUserID().compareTo(o2.getUserID()) < 0)
                         return -1;
                     else
-                        return  1;
+                        return 1;
                 }
             }
         });
