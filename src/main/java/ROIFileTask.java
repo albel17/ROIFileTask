@@ -5,6 +5,7 @@ import static java.nio.file.StandardWatchEventKinds.*;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -13,19 +14,19 @@ import java.util.concurrent.Executors;
 
 
 public class ROIFileTask {
-    volatile static Boolean stopped = false;
+    volatile static boolean stopped = false;
+    static boolean dbAvailable = false;
     static WatchService watcher;
+    static Statement stmt;
+    static Connection conn;
+    static File folder;
+    static File avgFolder;
 
     public static void main(String[] args) {
         Properties prop = new Properties();
-        final File folder;
-        final File avgFolder;
         final String USER;
         final String PASSWORD;
-        final String JDBC_DRIVER = "com.mysql.jdbc.Driver";
-        final String DB_URL = "jdbc:mysql://localhost/";
-        Connection conn = null;
-        Statement stmt = null;
+        final String DB_URL = "jdbc:mysql://localhost123/?autoReconnect=true&useSSL=false";
 
         ExecutorService executorService = Executors.newFixedThreadPool(10);
         final Thread stopThread = new Thread(new Runnable() {
@@ -58,23 +59,21 @@ public class ROIFileTask {
 
             folder = new File(prop.getProperty("inputFolder"));
             avgFolder = new File(prop.getProperty("outputFolder"));
+
             USER = prop.getProperty("dbuser");
             PASSWORD = prop.getProperty("dbpassword");
 
-            Class.forName("com.mysql.jdbc.Driver");
-            String createTableSQL = "CREATE TABLE DBUSER("
-                    + "USER_ID NUMBER(5) NOT NULL, "
-                    + "USERNAME VARCHAR(20) NOT NULL, "
-                    + "CREATED_BY VARCHAR(20) NOT NULL, "
-                    + "CREATED_DATE DATE NOT NULL, " + "PRIMARY KEY (USER_ID) "
-                    + ")";
-            String createDatabaseSQL = "CREATE DATABASE IF NOT EXISTS dbname";
-
-            conn = DriverManager.getConnection(DB_URL, USER, PASSWORD);
-            stmt = conn.createStatement();
-            stmt.execute(createDatabaseSQL);
-            stmt.execute("USE dbname");
-            stmt.execute("INSERT INTO new_table (userID, link, time, date) VALUES ('user1', 'vk.com', 100, '2000-11-05')");
+            try {
+                Class.forName("com.mysql.jdbc.Driver");
+                String createDatabaseSQL = "CREATE DATABASE IF NOT EXISTS dbname";
+                conn = DriverManager.getConnection(DB_URL, USER, PASSWORD);
+                stmt = conn.createStatement();
+                stmt.execute(createDatabaseSQL);
+                stmt.execute("USE dbname");
+                dbAvailable = false;
+            } catch (SQLException e) {
+                System.out.println("Error while getting DB connection.");
+            }
 
             watcher = FileSystems.getDefault().newWatchService();
             Path dir = folder.toPath();
@@ -118,6 +117,15 @@ public class ROIFileTask {
             e.printStackTrace();
         } finally {
             executorService.shutdown();
+            try {
+                if (stmt != null)
+                    stmt.close();
+                if (conn != null)
+                    conn.close();
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+
         }
     }
 
@@ -135,10 +143,8 @@ public class ROIFileTask {
             }
 
             noErrors = processFile(list, file.getName());
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
         } catch (IOException e) {
-            e.printStackTrace();
+            System.out.println("Error reading " + file.getName());
         } finally {
             if (br != null) {
                 try {
@@ -169,6 +175,7 @@ public class ROIFileTask {
         try {
             PrintWriter out = new PrintWriter(new File("C:\\folder\\avg\\avg_" + fileName));
             SimpleDateFormat sdf = new SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH);
+            SimpleDateFormat dbsdf = new SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH);
             sdf.setTimeZone(TimeZone.getTimeZone("GMT"));
             boolean found = true;
             Calendar tomorrow = new GregorianCalendar(TimeZone.getTimeZone("GMT"));
@@ -195,6 +202,10 @@ public class ROIFileTask {
                 sortViewItemList(todayList);
                 for (ViewItem item : todayList) {
                     out.println(item.getUserID() + "," + item.getLink() + "," + item.getAllTime() / 1000);
+                    if(dbAvailable)
+                    stmt.execute("INSERT INTO new_table (userID, link, time, date) VALUES ('" + item.getUserID() +
+                            "', '" + item.getLink() + "', " + item.getAllTime() + ", '" +
+                            dbsdf.format(calendar.getTime()) + "')");
                 }
                 tomorrow.add(Calendar.DAY_OF_MONTH, 1);
                 calendar.add(Calendar.DAY_OF_MONTH, 1);
@@ -204,6 +215,9 @@ public class ROIFileTask {
             out.close();
             return true;
         } catch (FileNotFoundException e) {
+            e.printStackTrace();
+            return false;
+        } catch (SQLException e) {
             e.printStackTrace();
             return false;
         }
