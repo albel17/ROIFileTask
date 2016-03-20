@@ -15,7 +15,7 @@ import java.util.concurrent.Executors;
 
 public class ROIFileTask {
     volatile static boolean stopped = false;
-    static boolean dbAvailable = false;
+    volatile static boolean dbAvailable = false;
     static WatchService watcher;
     static Statement stmt;
     static Connection conn;
@@ -26,7 +26,7 @@ public class ROIFileTask {
         Properties prop = new Properties();
         final String USER;
         final String PASSWORD;
-        final String DB_URL = "jdbc:mysql://localhost123/?autoReconnect=true&useSSL=false";
+        final String DB_URL = "jdbc:mysql://localhost/?autoReconnect=true&useSSL=false";
 
         ExecutorService executorService = Executors.newFixedThreadPool(10);
         final Thread stopThread = new Thread(new Runnable() {
@@ -65,12 +65,13 @@ public class ROIFileTask {
 
             try {
                 Class.forName("com.mysql.jdbc.Driver");
-                String createDatabaseSQL = "CREATE DATABASE IF NOT EXISTS dbname";
+                String createDatabaseSQL = "CREATE DATABASE IF NOT EXISTS avgDB";
                 conn = DriverManager.getConnection(DB_URL, USER, PASSWORD);
                 stmt = conn.createStatement();
                 stmt.execute(createDatabaseSQL);
-                stmt.execute("USE dbname");
-                dbAvailable = false;
+                stmt.execute("USE avgDB");
+                stmt.execute("CREATE TABLE IF NOT EXISTS `avgDB`.`avg_sessions` (`id` INT NOT NULL AUTO_INCREMENT,`userID` VARCHAR(45) NOT NULL,`link` VARCHAR(45) NOT NULL,`time` INT NOT NULL,`date` DATE NOT NULL, PRIMARY KEY (`id`))");
+                dbAvailable = true;
             } catch (SQLException e) {
                 System.out.println("Error while getting DB connection.");
             }
@@ -143,8 +144,8 @@ public class ROIFileTask {
             }
 
             noErrors = processFile(list, file.getName());
-        } catch (IOException e) {
-            System.out.println("Error reading " + file.getName());
+        } catch (Exception e) {
+            System.out.println("Error while reading " + file.getName());
         } finally {
             if (br != null) {
                 try {
@@ -202,10 +203,15 @@ public class ROIFileTask {
                 sortViewItemList(todayList);
                 for (ViewItem item : todayList) {
                     out.println(item.getUserID() + "," + item.getLink() + "," + item.getAllTime() / 1000);
-                    if(dbAvailable)
-                    stmt.execute("INSERT INTO new_table (userID, link, time, date) VALUES ('" + item.getUserID() +
-                            "', '" + item.getLink() + "', " + item.getAllTime() + ", '" +
-                            dbsdf.format(calendar.getTime()) + "')");
+                    if (dbAvailable)
+                        try {
+                            stmt.execute("INSERT INTO avg_sessions (userID, link, time, date) VALUES ('" + item.getUserID() +
+                                    "', '" + item.getLink() + "', " + item.getAllTime()/1000 + ", '" +
+                                    dbsdf.format(calendar.getTime()) + "')");
+                        } catch (SQLException e) {
+                            System.out.println("Error while saving to DB, disconnected.");
+                            dbAvailable = false;
+                        }
                 }
                 tomorrow.add(Calendar.DAY_OF_MONTH, 1);
                 calendar.add(Calendar.DAY_OF_MONTH, 1);
@@ -215,9 +221,6 @@ public class ROIFileTask {
             out.close();
             return true;
         } catch (FileNotFoundException e) {
-            e.printStackTrace();
-            return false;
-        } catch (SQLException e) {
             e.printStackTrace();
             return false;
         }
